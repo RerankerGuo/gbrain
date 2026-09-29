@@ -115,6 +115,15 @@ export function isIdentityEntity(slug: string, type?: string | null): boolean {
   return (type != null && IDENTITY_TYPES.has(type)) || IDENTITY_DIRS.some(dir => slug.startsWith(dir));
 }
 
+const FACT_ENTITY_TYPES = new Set(['concept', 'project', 'deal']);
+const FACT_ENTITY_DIRS = ['hosts/', 'projects/', 'concepts/', 'deals/'];
+
+/** Pages a fuzzy fact attribution may land on: entities, never meetings, notes or other documents. */
+function isFactEntityPage(slug: string, type: string | null): boolean {
+  return isIdentityEntity(slug, type) || (type != null && FACT_ENTITY_TYPES.has(type))
+    || FACT_ENTITY_DIRS.some(dir => slug.startsWith(dir));
+}
+
 function nameTokens(value: string): string {
   const folded = foldNonDecomposingLatin(value).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
   const tokens = folded.split(/[^\p{L}\p{N}]+/u).filter(token => token && !NAME_NOISE_TOKENS.has(token));
@@ -426,7 +435,9 @@ async function tryPrefixExpansion(
       if (rows.length === 1) return rows[0].slug;
       // Multiple matches: the top row (sorted by connection_count desc)
       // wins. The slug-ASC secondary key makes ties deterministic when
-      // connection counts collide — important for test pinning.
+      // connection counts collide — important for test pinning. The
+      // phantom pass's findPrefixCandidates gate refuses any multi-candidate
+      // redirect, so this top row is never taken on its own.
       return rows[0].slug;
     } catch {
       // Defensive: a missing table or index shouldn't crash extraction.
@@ -450,16 +461,13 @@ async function tryExactSlug(
   source_id: string,
   candidate: string,
 ): Promise<string | null> {
-  try {
-    const rows = await engine.executeRaw<{ slug: string }>(
-      `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
-      [source_id, candidate],
-    );
-    if (rows.length > 0) return rows[0].slug;
-  } catch {
-    // Defensive: fail open. Caller still gets a slug from the fallback.
-  }
-  return null;
+  // A database error propagates: degrading to the fallback slug would
+  // silently attribute the caller's facts to a different entity.
+  const rows = await engine.executeRaw<{ slug: string }>(
+    `SELECT slug FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL LIMIT 1`,
+    [source_id, candidate],
+  );
+  return rows[0]?.slug ?? null;
 }
 
 async function tryFuzzyMatch(
@@ -474,8 +482,8 @@ async function tryFuzzyMatch(
   // tends to be display-name-shaped ("Alice Example" vs "alice-example"). Cap at
   // 3 candidates; pick the first deterministic one.
   try {
-    const rows = await engine.executeRaw<{ slug: string; title: string; score: number }>(
-      `SELECT slug, title,
+    const rows = await engine.executeRaw<{ slug: string; title: string; type: string | null; score: number }>(
+      `SELECT slug, title, type,
          GREATEST(
            similarity(lower(title), $2),
            similarity(slug, $3)
@@ -495,13 +503,28 @@ async function tryFuzzyMatch(
     // and facts about a person with no page to a meeting page that carries
     // their name. Entity resolution takes a candidate only when it names the
     // same entity; anything else falls back to the reference's own slug.
-    if (sameNameOnly) return rows.find(row => sameEntityName(raw, row.title, row.slug))?.slug ?? null;
-    if (rows.length > 0 && rows[0].score >= 0.7) return rows[0].slug;
-  } catch {
-    // pg_trgm functions might not be available on every engine config;
-    // fall through to slugify.
+    // Only entity pages are candidates (a meeting titled "Dana Jones Example"
+    // is not Dana), and two entity pages carrying the same name are
+    // ambiguous: neither wins by trigram score.
+    if (sameNameOnly) {
+      const named = rows.filter(row => isFactEntityPage(row.slug, row.type) && sameEntityName(raw, row.title, row.slug));
+      return named.length === 1 ? named[0].slug : null;
+    }
+    // Phantom canonicals: a clear winner only, with a margin over the runner-up.
+    if (rows.length > 0 && rows[0].score >= 0.7 && (rows.length === 1 || rows[0].score - rows[1].score >= 0.1)) return rows[0].slug;
+  } catch (err) {
+    // pg_trgm might not be installed on every engine config: that brain has
+    // no fuzzy arm and falls through to slugify. Any other database error
+    // propagates rather than becoming a silent misattribution.
+    if (!isMissingTrigramError(err)) throw err;
   }
   return null;
+}
+
+function isMissingTrigramError(err: unknown): boolean {
+  const code = typeof err === 'object' && err !== null && 'code' in err ? String((err as { code?: unknown }).code) : '';
+  const message = err instanceof Error ? err.message : String(err);
+  return code === '42883' || /function similarity|operator does not exist: text %/i.test(message);
 }
 
 /**
