@@ -74,7 +74,7 @@ import { loadStorageConfig, findDbOnlyCollisions } from '../core/storage-config.
 // time. integrations.ts is side-effect-free at module load (pure recipe I/O
 // helpers), so a static import is safe here.
 import { getConfiguredCollectorOutputs } from './integrations.ts';
-import { printManagedSyncDiagnostic } from './sync-diagnostics.ts';
+import { printManagedSyncDiagnostic, printManagedSyncNotes } from './sync-diagnostics.ts';
 import { getDefaultSourcePath } from '../core/source-resolver.ts';
 // v0.41.32.0: stamp the durable newest-COMMIT timestamp at sync time so the
 // remote staleness path reads a column instead of shelling out to git.
@@ -277,6 +277,8 @@ export interface SyncResult {
    * bookmark advancement; rename the files to import them.
    */
   malformedSkipped?: number;
+  /** Managed sync: files skipped because another origin keeps their slug, and links derived after the checkpoint. */
+  slugCollisions?: import('../core/persistence/sync-discovery.ts').SyncSlugCollision[]; links?: import('../core/persistence/links-maintenance.ts').ManagedLinkExtraction;
   /**
    * Aggregated alias/undeclared explicit-type warnings (schema.type_warnings,
    * default on) — one entry per distinct non-canonical type this run.
@@ -6003,4 +6005,5 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
       write(`  Re-run 'gbrain sync' to continue (last_commit unchanged; safe to retry).`);
       break;
   }
+  printManagedSyncNotes(result, write);
 }

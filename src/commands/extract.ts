@@ -888,6 +888,7 @@ export async function runExtract(engine: BrainEngine, args: string[], authority?
     }
     const sidIdx = args.indexOf('--source-id');
     const staleSourceId = (sidIdx >= 0 && sidIdx + 1 < args.length) ? args[sidIdx + 1] : undefined;
+    if (await (await import('./extract-stale-delegate.ts')).runManagedExtractStale(engine, args, staleSourceId)) return;
     await extractStaleFromDB(engine, {
       dryRun: args.includes('--dry-run'),
       jsonMode: args.includes('--json'),
