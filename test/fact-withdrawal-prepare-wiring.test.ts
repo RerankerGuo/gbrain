@@ -11,6 +11,7 @@ import { expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 
+// test-reads-source-ok: structural pin on coordinated prepare wiring; sync, connector and reconcile fixtures are too heavy to drive each path behaviorally.
 const source = (path: string) => readFileSync(join(import.meta.dir, '../src/core/persistence', path), 'utf8').replace(/\s+/g, ' ');
 const count = (text: string, needle: string) => text.split(needle).length - 1;
 
@@ -22,8 +23,15 @@ test.each([
   ['page-prepare.ts', 1],
 ] as const)('%s validates every prepared content import it applies', (file, applied) => {
   const text = source(file);
-  expect(count(text, 'await ready.apply(tx)')).toBe(applied);
+  expect(count(text, 'await ready.apply(tx)') + count(text, 'await applied.apply(tx)')).toBe(applied);
   expect(count(text, 'await ready.validate(tx)') + count(text, 'validate: ready.validate')).toBe(applied);
+});
+
+test('a managed rename validates the import it re-prepares at the new slug before applying it', () => {
+  const text = source('sync-prepare.ts');
+  const validated = text.indexOf('await movedImport.validate(tx); applied = movedImport;');
+  expect(validated).toBeGreaterThan(0);
+  expect(validated).toBeLessThan(text.indexOf('await applied.apply(tx)'));
 });
 
 test('the coordinator validates prepared mutations before publication boundaries and file writes', () => {
