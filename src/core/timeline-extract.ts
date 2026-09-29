@@ -154,6 +154,15 @@ export interface TimelineOrphanPruneResult {
 }
 
 /**
+ * Managed brains refuse the direct prune: `timeline_entries` is writer-guarded,
+ * and the persistence coordinator already replaces a page's rows with what its
+ * text produces each time sync publishes a change to the page.
+ */
+export const MANAGED_TIMELINE_PRUNE_REFUSAL =
+  'This brain uses managed persistence: the persistence coordinator replaces a page\'s timeline rows each time sync publishes a change to it, ' +
+  'and timeline rows cannot be deleted directly. `--prune-orphans --dry-run` still lists rows left from before; they clear when their page next changes.';
+
+/**
  * One-time prune of timeline rows orphaned before extraction reconciled them
  * (#4649): runs the reconciliation above against each page's stored text for
  * every live page that holds timeline rows, optionally scoped to one source

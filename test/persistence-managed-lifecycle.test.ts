@@ -249,3 +249,29 @@ test('extract --stale on a managed brain derives links after a --no-extract sync
     expect((await engine.getTimeline('people/alice-example', { sourceId: f.id })).map(entry => entry.summary)).toEqual(['Joined Acme Example']);
   }
 }), 180_000);
+
+test('a managed brain reconciles timeline rows on publish and refuses the direct orphan prune', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  for (const engine of engines) {
+    const f = await fixture(engine, {
+      'people/bea-example.md': person('Bea Example') + '\n## Timeline\n- **2024-03-01** | Joined Acme Example\n- **2024-05-01** | Left Acme Example\n',
+    });
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    write(f.root, 'people/bea-example.md', person('Bea Example') + '\n## Timeline\n- **2024-03-01** | Joined Acme Example\n');
+    commit(f.root, 'drop a dated bullet');
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    expect((await engine.getTimeline('people/bea-example', { sourceId: f.id })).map(entry => entry.summary)).toEqual(['Joined Acme Example']);
+    const printed: string[] = [];
+    const stdoutWrite = process.stdout.write;
+    process.stdout.write = ((chunk: string | Uint8Array) => { printed.push(String(chunk)); return true; }) as typeof process.stdout.write;
+    try { await runExtract(engine, ['timeline', '--prune-orphans', '--dry-run', '--source-id', f.id, '--json']); } finally { process.stdout.write = stdoutWrite; }
+    expect(JSON.parse(printed.at(-1)!)).toMatchObject({ action: 'timeline_prune_orphans', dry_run: true, orphans: 0 });
+    const errors: string[] = [];
+    const error = console.error, exit = process.exit;
+    console.error = (...args: unknown[]) => { errors.push(args.join(' ')); };
+    process.exit = ((code?: number) => { throw new Error(`exit ${code}`); }) as typeof process.exit;
+    try {
+      await expect(runExtract(engine, ['timeline', '--prune-orphans', '--source-id', f.id])).rejects.toThrow('exit 1');
+    } finally { console.error = error; process.exit = exit; }
+    expect(errors.join('\n')).toContain('managed persistence');
+  }
+}), 180_000);
