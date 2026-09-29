@@ -59,8 +59,17 @@ export function parseInlineCitationTimelineEntries(
   for (const paragraph of citationParagraphs(content, opts)) {
     const matches = [...paragraph.text.matchAll(CITATION_TIMELINE_RE)];
     if (matches.length === 0) continue;
+    // #5483: strip the citation's Markdown link TARGET together with the
+    // citation text. A canonical emailCitation() renders as
+    // `[Source: email "Subject", date](https://mail.google.com/…)`, so
+    // removing only the bracketed part left `(url)` behind and the URL
+    // itself became the summary — timeline rows cannot be removed, so every
+    // page ingested that way kept a permanent URL-fragment entry. The target
+    // pattern tolerates one nesting level (Wikipedia-style `Foo_(bar)` URLs)
+    // so no stray `)` survives; a citation-only paragraph then falls through
+    // the empty-summary guard below instead of minting that row.
     const summary = paragraph.text
-      .replace(/\[Source:[^\]]*\]/g, '')
+      .replace(/\[Source:[^\]]*\](?:\((?:[^()]|\([^()]*\))*\))?/g, '')
       .replace(/^[-*>#\s]+/, '')
       .replace(/\s+/g, ' ')
       .trim()
