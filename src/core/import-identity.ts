@@ -101,6 +101,7 @@ async function hasMoveEvidence(engine: BrainEngine, sourceId: string, dup: Page,
  */
 async function recordedOrigin(engine: BrainEngine, sourceId: string, page: Page, sourcePath: string): Promise<{ root: string; file: string } | null> {
   if (page.source_uri?.startsWith(FILE_URI)) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- normalizes the file:// origin importFromFile recorded; it is only compared with other paths and accepted when rejoining the relative path under the derived root lands on it
     const file = resolve(page.source_uri.slice(FILE_URI.length));
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- walks up from the recorded origin by the depth of its own relative path; the result is only accepted when rejoining the relative path lands on the same file
     const root = resolve(file, ...sourcePath.split(/[\\/]/).map(() => '..'));
@@ -109,6 +110,7 @@ async function recordedOrigin(engine: BrainEngine, sourceId: string, page: Page,
   const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
   const configured = source?.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
   if (!configured) return null;
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the operator's configured source root (sources.local_path or sync.repo_path); every probe under it goes through pathUnderRoot confinement
   const root = resolve(configured);
   const file = pathUnderRoot(root, sourcePath);
   return file ? { root, file } : null;
@@ -131,6 +133,7 @@ function canonicalPath(path: string): string {
   try {
     return realpathSync.native(path);
   } catch {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- normalizes an already-derived path for equality comparison only; nothing is read or written through it
     return resolve(path);
   }
 }

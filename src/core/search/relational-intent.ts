@@ -231,7 +231,9 @@ function buildPatterns(vocab?: RelationVocab): CompiledPattern[] {
   });
 
   for (const r of RELATIONS) {
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- sources are this module's constant RELATIONS lexicon (default patterns are memoized); query text is only matched against them, never compiled
     const out = (re: string) => patterns.push({ re: new RegExp(re, 'i'), kind: 'who_rel', linkTypes: r.linkTypes, direction: 'out', seedGroups: 1 });
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- same constant vocabulary as `out` above
     const inc = (re: string) => patterns.push({ re: new RegExp(re, 'i'), kind: 'who_rel', linkTypes: r.linkTypes, direction: 'in', seedGroups: 1 });
     // Outgoing first: "which companies has X backed" must not read as incoming.
     if (r.outVerbs) out(`^(?:what|which)\\s+(?:companies|startups|deals|businesses|firms|organizations)?\\s*(?:has|have|did|does|do)\\s+${SEED}\\s+(?:${r.outVerbs})${END}`);
