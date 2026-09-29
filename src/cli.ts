@@ -37,6 +37,7 @@ import { shouldForceExitAfterMain, finishCliTeardown, flushThenExit, currentExit
 import { serializeMarkdown } from './core/markdown.ts';
 import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { runCliPreflight } from './core/cli-preflight.ts';
+import { isBooleanLiteral, isKnownOpFlag } from './core/op-flag-tokens.ts';
 import { conceptNudge } from './core/search/query-intent.ts';
 import { redactRetrievalOutput } from './core/search/output-redaction.ts';
 import type { CliOptions } from './core/cli-options.ts';
@@ -1133,12 +1134,6 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
-// #4602: the ONE definition of "a literal true/false value token" — shared by
-// parseOpArgs (consume it as the boolean flag's value) and findUnknownOpFlag
-// (mirror the traversal so the token counts as consumed) so the parser and
-// the validator can never disagree on what a boolean flag swallows.
-const isBooleanLiteral = (tok: string | undefined): boolean => tok === 'true' || tok === 'false';
-
 export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
@@ -1200,6 +1195,11 @@ export function parseOpArgs(op: Operation, args: string[]): Record<string, unkno
         // flag's value (never a plausible positional), same as above.
         params[key] = isBooleanLiteral(args[i + 1]) ? args[++i] === 'true' : true;
       } else if (i + 1 < args.length) {
+        // #5700: a known flag of this command in the value slot is a missing
+        // argument, not a value (see op-flag-tokens.ts).
+        if (isKnownOpFlag(op, args[i + 1])) {
+          throw new OperationError('invalid_params', `--${key.replace(/_/g, '-')} requires a value, but '${args[i + 1]}' is a flag.`);
+        }
         // #2822: a flag silently overwriting an already-set positional is
         // almost always an argument-plumbing mistake (e.g. `gbrain put
         // notes.md --content "..."` — the file path landed in `content`
