@@ -275,3 +275,33 @@ test('a managed brain reconciles timeline rows on publish and refuses the direct
     expect(errors.join('\n')).toContain('managed persistence');
   }
 }), 180_000);
+
+test('a managed rename carries fence facts to the new slug once, keeping their ids', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+  const fenced = (extra = '') => person('Gia Example') + 'Plenty of stable text so Git sees the move as a rename of this person page.\n' + extra + `
+## Facts
+
+<!--- gbrain:facts:begin -->
+| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |
+|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|
+| 1 | Lives in Lisbon | fact | 1.0 | world | medium | 2024-01-01 |  | note |  |
+| 2 | Prefers tea | preference | 0.9 | world | low | 2024-02-01 |  | note |  |
+<!--- gbrain:facts:end -->
+`;
+  const facts = (engine: BrainEngine, sourceId: string, slug: string) => engine.executeRaw<{ id: number; row_num: number | null; fact: string; expired: boolean }>(
+    `SELECT id, row_num, fact, expired_at IS NOT NULL AS expired FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 ORDER BY row_num`, [sourceId, slug]);
+  for (const engine of engines) {
+    const f = await fixture(engine, { 'people/gia-example.md': fenced() });
+    await performManagedSync(engine, { sourceId: f.id, noPull: true });
+    const before = await facts(engine, f.id, 'people/gia-example');
+    expect(before.map(r => [r.row_num, r.fact, r.expired])).toEqual([[1, 'Lives in Lisbon', false], [2, 'Prefers tea', false]]);
+    git(f.root, 'mv', 'people/gia-example.md', 'people/gia-example-2.md');
+    write(f.root, 'people/gia-example-2.md', fenced('An edit that rides along with the rename.\n'));
+    commit(f.root, 'rename with facts');
+    expect(await performManagedSync(engine, { sourceId: f.id, noPull: true })).toMatchObject({ status: 'synced', renamed: 1 });
+    expect(await facts(engine, f.id, 'people/gia-example')).toEqual([]);
+    const after = await facts(engine, f.id, 'people/gia-example-2');
+    expect(after.map(r => [r.id, r.row_num, r.fact, r.expired])).toEqual(before.map(r => [r.id, r.row_num, r.fact, false]));
+    const [alias] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM slug_aliases WHERE source_id=$1 AND alias_slug='people/gia-example'`, [f.id]);
+    expect(alias.n).toBe(1);
+  }
+}), 180_000);
