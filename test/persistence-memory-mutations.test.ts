@@ -150,6 +150,39 @@ describe('journaled memory publication, both engines', () => {
     }
   });
 
+  // #5319: a sub-day ttl wrote a fence cell truncated to 00:00 of the same
+  // day — hours in the past — so the fact answered no read arm while the
+  // response reported a correct future valid_until. The cell now carries the
+  // full instant and stays readable until the real expiry.
+  test('a sub-day ttl keeps the fence expiry (and the derived projection) in the future', async () => {
+    for (const engine of engines) {
+      const slug = 'people/subday-ttl-example';
+      await setupPage(engine, slug);
+      const before = Date.now();
+      const first = await operationsByName.remember!.handler(context(engine), {
+        fact: 'Expires within the hour', provenance: 'test conversation', entity: slug, ttl: '1h',
+      }) as Record<string, unknown>;
+      expect(first).toMatchObject({ status: 'inserted', entity_slug: slug });
+      const fence = parseFactsFence((await engine.readPageSnapshot(slug, { sourceId }))!.page.compiled_truth).facts;
+      const cell = fence.find(f => f.claim === 'Expires within the hour')!.validUntil!;
+      const expiry = Date.parse(cell);
+      // Pre-fix: expiry <= before (00:00 of the write day). Post-fix: ~1h out.
+      expect(expiry).toBeGreaterThan(before);
+      expect(expiry).toBeLessThanOrEqual(before + 2 * 60 * 60 * 1000);
+      // The fence-derived projection carries the same instant (it used to
+      // re-truncate on every re-extract).
+      const { extractFactsFromFenceText } = await import('../src/core/facts/extract-from-fence.ts');
+      const [projected] = extractFactsFromFenceText(fence, slug, sourceId);
+      expect(projected.valid_until!.getTime()).toBe(expiry);
+      // The DB column the write itself stored already agreed; it must not drift.
+      const rows = await engine.executeRaw<{ valid_until: Date | null }>('SELECT valid_until FROM facts WHERE id=$1', [Number(first.id)]);
+      expect(new Date(rows[0].valid_until!).getTime()).toBe(expiry);
+      // The fact is recallable before its expiry (the reported symptom).
+      const recalled = await operationsByName.recall!.handler(context(engine), { entity: slug }) as Record<string, unknown>;
+      expect((recalled.facts as Array<{ fact: string }>).map(f => f.fact)).toContain('Expires within the hour');
+    }
+  });
+
   test('concurrent requests preserve every append, tags, timeline and hidden fence rows', async () => {
     for (const engine of engines) {
       const slug = 'people/concurrent-example';

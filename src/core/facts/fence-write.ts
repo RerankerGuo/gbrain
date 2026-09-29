@@ -440,7 +440,10 @@ export async function writeFactsToFence(
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.
-          validUntil:  f.validUntil ? f.validUntil.toISOString().slice(0, 10) : undefined,
+          // #5319: the FULL instant, not slice(0,10) — a date-truncated expiry
+          // moves back to 00:00 of the same day, so a sub-day ttl wrote a fact
+          // that was already expired (and therefore unreadable) on arrival.
+          validUntil:  f.validUntil ? f.validUntil.toISOString() : undefined,
           source:      f.source,
           context:     f.context ?? undefined,
         });

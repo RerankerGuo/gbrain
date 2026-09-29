@@ -134,6 +134,22 @@ describe('extractFactsFromFenceText — date derivation contract', () => {
     expect(out[0].valid_until!.getUTCMonth()).toBe(11); // December
   });
 
+  // #5319: the fence writers now store the FULL ISO instant for valid_until
+  // (a date-truncated expiry moves back to 00:00 of the same day, so a
+  // sub-day ttl wrote an already-expired — unreadable — fact). The reader
+  // must carry the instant through, not re-truncate it.
+  test('a full-ISO-instant validUntil keeps its time of day through the projection', () => {
+    const instant = '2026-09-22T08:55:46.625Z';
+    const out = extractFactsFromFenceText(
+      [baseFact({ validUntil: instant })],
+      'people/alice',
+      'default',
+      { nowOverride: FROZEN_TODAY },
+    );
+    expect(out[0].valid_until!.toISOString()).toBe(instant);
+    expect(out[0].valid_until!.getTime()).toBe(Date.parse(instant));
+  });
+
   test('active row with no validUntil → valid_until = null', () => {
     const out = extractFactsFromFenceText(
       [baseFact()],

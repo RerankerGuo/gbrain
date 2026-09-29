@@ -63,7 +63,12 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     if (parsed.warnings.length) throw new OperationError('storage_error', 'The entity facts fence is malformed; repair it before appending memory.');
     const appended = upsertFactRow(snapshot.page.compiled_truth, { claim: input.fact, kind: input.kind, visibility: input.visibility,
       confidence: 1, notability: 'medium', validFrom: validFrom.toISOString().slice(0, 10),
-      validUntil: validUntil?.toISOString().slice(0, 10), source: fact.source });
+      // #5319: the FULL instant, not slice(0,10). Truncating an expiry to its
+      // date moves it back to 00:00 of the same day, so every sub-day ttl
+      // (ttl: "1h" at 07:55 → cell 2026-09-22) landed IN THE PAST: the fact
+      // answered no read arm while reporting success. parseValidDate accepts
+      // a full ISO instant, so the reader needs no change.
+      validUntil: validUntil?.toISOString(), source: fact.source });
     rowNum = appended.rowNum;
     let body = appended.body;
     const old = decision.candidate;
