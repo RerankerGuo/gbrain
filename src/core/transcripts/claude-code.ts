@@ -81,6 +81,36 @@ export function isClaudeCodeWorkflowArtifactFile(path: string): boolean {
   return i !== -1 && segs[i + 1] === 'workflows' && segs.length > i + 2;
 }
 
+/**
+ * Claude Code Remote Control state files that Claude Code writes NEXT TO the
+ * session JSONL under ~/.claude/projects/<slug>/ and that are not transcripts:
+ *
+ *   - `<session-uuid>.ccr-tip.json` — one per Remote Control session (~89 B)
+ *   - `bridge-pointer.json`         — one per project directory
+ *
+ * `gbrain transcripts ingest <dir>` expands a directory to every importable
+ * extension (`.json` included, for consumer exports), so each state file
+ * otherwise reaches the importer and fails with `unknown format` — on a
+ * nightly `--since last` directory scope those per-file errors bury the real
+ * ones. Discovery never sees them (it collects `.jsonl` only); this guards
+ * the explicit-path/directory lane, alongside the openclaw-checkpoint,
+ * grok-sidecar, subagent and workflow-artifact predicates. NAME-scoped rather
+ * than path-scoped: unlike the grok bare-UUID heuristic, these two names can
+ * never belong to a session file (sessions are `<uuid>.jsonl`), and a `.json`
+ * that is not a consumer export errors on import anyway — so claiming it can
+ * only remove noise, never drop importable content.
+ */
+const CCR_TIP_SUFFIX = '.ccr-tip.json';
+const CCR_BRIDGE_POINTER = 'bridge-pointer.json';
+
+/** True for Claude Code Remote Control state files (never transcripts). */
+export function isClaudeCodeRemoteControlStateFile(path: string): boolean {
+  // Split on BOTH separators (grok.ts convention): a Windows-style path must
+  // resolve its basename on a POSIX host too, where node:path would not.
+  const base = path.split(/[/\\]/).pop() ?? '';
+  return base.endsWith(CCR_TIP_SUFFIX) || base === CCR_BRIDGE_POINTER;
+}
+
 /** Keys that mark a Claude Code project transcript. */
 function looksLikeClaudeLine(obj: Record<string, unknown>): boolean {
   if (
