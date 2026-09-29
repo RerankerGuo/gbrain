@@ -54,6 +54,10 @@ export async function withEnv<T>(
   for (const key of keys) {
     prior[key] = process.env[key];
   }
+  // Bun keeps a stale zone after `delete process.env.TZ` (it can revert to an
+  // earlier override, not the process default), so an unset TZ is restored as
+  // the zone that was in effect before the override.
+  const priorZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   try {
     for (const [key, value] of Object.entries(overrides)) {
       if (value === undefined) {
@@ -65,7 +69,9 @@ export async function withEnv<T>(
     return await fn();
   } finally {
     for (const [key, value] of Object.entries(prior)) {
-      if (value === undefined) {
+      if (value === undefined && key === 'TZ' && process.env.TZ !== undefined) {
+        process.env.TZ = priorZone;
+      } else if (value === undefined) {
         delete process.env[key];
       } else {
         process.env[key] = value;
