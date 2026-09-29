@@ -42,7 +42,9 @@ import {
   ALLOWED_TYPES,
   pageTypesForAllowed,
   ALLOWED_TYPE_ALIASES,
+  __testing,
 } from '../src/commands/extract-conversation-facts.ts';
+import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { _resetLlmCacheForTests } from '../src/core/conversation-parser/llm-base.ts';
 import { BudgetExhausted } from '../src/core/budget/budget-tracker.ts';
 import { loadOpCheckpoint } from '../src/core/op-checkpoint.ts';
@@ -1740,6 +1742,33 @@ describe('runExtractConversationFactsCore', () => {
 describe('body cap constant (Eng A2)', () => {
   test('MAX_PAGE_BODY_BYTES is 25MB', () => {
     expect(MAX_PAGE_BODY_BYTES).toBe(25 * 1024 * 1024);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #5448 — `--json` is a UNIVERSAL flag in the generated cli-flag-registry
+// (UNIVERSAL_FLAGS in scripts/generate-flag-registry.ts), so scripts written
+// against the registry add it expecting a machine-readable envelope. This
+// command's own parser used to fall through to `Unknown flag: --json` and
+// exit 1 with no work done. Pin BOTH halves of the contract: the registry
+// still advertises the flag, and the parser accepts it (without swallowing a
+// following flag as its value).
+// ---------------------------------------------------------------------------
+
+describe('#5448 --json registry/parser parity', () => {
+  test('the generated registry still advertises --json for this command', () => {
+    const registry = CLI_FLAG_REGISTRY['extract-conversation-facts'] ?? [];
+    expect(registry).toContain('--json');
+  });
+
+  test('parseArgs accepts --json and leaves the following flag alone', () => {
+    expect(__testing.parseArgs(['--limit', '1', '--json'])).toEqual({ limit: 1, json: true });
+    // A boolean flag after --json is still parsed as its own flag.
+    expect(__testing.parseArgs(['--json', '--dry-run'])).toEqual({ json: true, dryRun: true });
+    // The issue's literal repro shape no longer errors.
+    const parsed = __testing.parseArgs(['--limit', '1', '--json', '--force']);
+    expect(parsed.error).toBeUndefined();
+    expect(parsed).toEqual({ limit: 1, json: true, force: true });
   });
 });
 
