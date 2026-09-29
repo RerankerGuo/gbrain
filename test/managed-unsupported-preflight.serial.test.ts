@@ -20,6 +20,7 @@ const { runLoopsExtract } = await import('../src/core/google/loops-extract.ts');
 const { runExtractConversationFactsCore } = await import('../src/commands/extract-conversation-facts.ts');
 const { runPhaseConversationFactsBackfill } = await import('../src/core/cycle/conversation-facts-backfill.ts');
 const { runExtractFacts } = await import('../src/core/cycle/extract-facts.ts');
+const { runEnrichCore } = await import('../src/commands/enrich.ts');
 const { runPersistenceAdministration } = await import('../src/core/persistence/administration.ts');
 const home = mkdtempSync(join(tmpdir(), 'gbrain-managed-preflight-'));
 const env = { GBRAIN_HOME: home, GBRAIN_SOURCE: undefined, GBRAIN_BRAIN_ID: 'host' };
@@ -70,11 +71,18 @@ test('bulk phase refuses before provider work but disabled gates retain their sk
   expect(chatCalls).toBe(0);
 }));
 
+test('unsupported enrich refuses before any provider work (#5588: guarded AND declared)', async () => withEnv(env, async () => {
+  chatCalls = 0;
+  await expect(runEnrichCore(engine, { sourceId: 'default', dryRun: false }))
+    .rejects.toMatchObject({ code: 'writer_coordinator_required' });
+  expect(chatCalls).toBe(0);
+}));
+
 test('writer status and activation preview name unsupported bulk capabilities without changing them', async () => withEnv(env, async () => {
   const before = await engine.executeRaw('SELECT * FROM persistence_brain');
   const status = await runPersistenceAdministration(engine, 'writer_status', {}) as any;
   const activation = await runPersistenceAdministration(engine, 'writer_activate', { confirm_quiesced: true, dry_run: true });
-  expect(status.onboarding.unsupported_maintenance).toEqual(['cycle.extract_facts', 'extract-conversation-facts', 'conversation_facts_backfill', 'loops_extract']);
+  expect(status.onboarding.unsupported_maintenance).toEqual(['cycle.extract_facts', 'extract-conversation-facts', 'conversation_facts_backfill', 'loops_extract', 'enrich', 'cycle.enrich_thin']);
   expect(activation.unsupported_maintenance).toEqual(status.onboarding.unsupported_maintenance);
   expect(await engine.executeRaw('SELECT * FROM persistence_brain')).toEqual(before);
 }));

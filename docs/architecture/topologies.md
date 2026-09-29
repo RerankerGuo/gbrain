@@ -551,7 +551,8 @@ facts backed by live non-private evidence are eligible for public consolidation;
 this is no guarantee that private facts will be consolidated. Remote maintenance
 authority is not added. Legacy fence reconciliation (`dream --phase
 extract_facts`), bulk `extract-conversation-facts`,
-`conversation_facts_backfill`, and `loops_extract` remain unsupported under
+`conversation_facts_backfill`, `loops_extract`, and `enrich` / the
+`cycle.enrich_thin` phase remain unsupported under
 managed persistence, including preview paths that could spend. Their preflight
 refuses with `writer_coordinator_required`; writer status and activation preview
 list them in `unsupported_maintenance`. The restored `extract_facts` operation
