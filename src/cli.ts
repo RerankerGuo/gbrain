@@ -1772,8 +1772,20 @@ export function formatResult(
     case 'list_pages': {
       const pages = result as any[];
       if (pages.length === 0) return 'No pages found.\n';
+      // #5433: escape record-boundary chars in slug/type/title. Slugs come
+      // from a grammar that excludes these today, but titles (and in principle
+      // types) are free text. A title with a newline turns one page into two
+      // output lines; a tab adds a column. Anything that pipes `gbrain list`
+      // into cut/awk/while-read miscounts or misattributes pages. The escape
+      // is two-character sequences, so ordinary titles render exactly as today
+      // (no embed yet); `--json` output is untouched (it still carries the
+      // raw characters through the JSON path).
+      const cell = (v: unknown): string => {
+        const s = v === null || v === undefined ? '' : String(v);
+        return s.replace(/\\/g, '\\\\').replace(/\t/g, '\\t').replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+      };
       return pages.map(p =>
-        `${p.slug}\t${p.type}\t${p.updated_at?.toString().slice(0, 10) || '?'}\t${p.title}`,
+        `${cell(p.slug)}\t${cell(p.type)}\t${cell(p.updated_at?.toString().slice(0, 10) || '?')}\t${cell(p.title)}`,
       ).join('\n') + '\n';
     }
     case 'search':
