@@ -1246,6 +1246,17 @@ export async function runPhaseExtractAtoms(
               ...(atom.concepts && atom.concepts.length > 0 && { concepts: atom.concepts }),
               ...(atom.virality_score !== undefined && { virality_score: atom.virality_score }),
               ...(atom.emotional_register && { emotional_register: atom.emotional_register }),
+              // #5211: stamp `dream_generated: true` so the anti-loop guards
+              // that read this flag (`discoverExtractablePages`,
+              // `countExtractAtomsBacklog`, the `isFactsBackstopEligible`
+              // predicate, the `raw_provenance` doctor check, source-boost
+              // demotion, etc.) treat the atom pages the way they treat
+              // synthesis / extract_receipt rows. Previously the guard at
+              // D9 #4 read `dream_generated` but no writer ever stamped it
+              // here, so atoms kept re-discovering themselves and
+              // `propose_takes` re-extracted them as if they were
+              // human-authored source material.
+              dream_generated: true,
               extracted_at: new Date().toISOString(),
               extracted_by: 'extract_atoms-v0.41.2.1',
             },

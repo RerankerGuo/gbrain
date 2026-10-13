@@ -292,6 +292,29 @@ describe('v0.41.2.1: runPhaseExtractAtoms — dual-source merge + idempotency', 
     expect(pageAtom!.frontmatter.source_hash).toBe('pchash1234567890');
   });
 
+  test('#5211: every atom page is stamped dream_generated:true so the D9 #4 anti-loop guard fires', async () => {
+    // Before the fix: extract_atoms read `dream_generated` from incoming pages
+    // (line 381, 461, 478) but never stamped it on the atoms it wrote, so the
+    // guard could not fire on its own product. Now: every atom row carries
+    // `dream_generated: true` in frontmatter, which is what
+    // `isFactsBackstopEligible`, `countExtractAtomsBacklog`, the
+    // `raw_provenance` doctor check, source-boost demotion, and the
+    // post-v0.41.2.1 anti-loop guards all read.
+    const chat = stubChatUnique();
+    await runPhaseExtractAtoms(engine, {
+      _transcripts: [{ filePath: '/T-dg.txt', content: 'tc', contentHash: 'tchashdg1234567890' }],
+      _pages: [{ slug: 'meeting/PDG', content: 'pc', contentHash: 'pchashdg1234567890' }],
+      _chat: chat,
+    });
+    const rows = await engine.executeRaw<{ slug: string; frontmatter: Record<string, unknown> }>(
+      `SELECT slug, frontmatter FROM pages WHERE type = 'atom' ORDER BY slug`,
+    );
+    expect(rows.length).toBe(2);
+    for (const r of rows) {
+      expect(r.frontmatter.dream_generated).toBe(true);
+    }
+  });
+
   test('sourceId threads into putPage call (D9 #1 regression — atoms land in correct source)', async () => {
     await engine.executeRaw(
       `INSERT INTO sources (id, name) VALUES ('dept-x', 'dept-x') ON CONFLICT DO NOTHING`,
