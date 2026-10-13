@@ -29,6 +29,7 @@ import {
   type Check,
 } from '../src/commands/doctor.ts';
 import { buildEmbedSkipMarker } from '../src/core/embed-skip.ts';
+import { checkUnboundSource } from '../src/commands/doctor/checks/unbound-source.ts';
 
 let engine: PGLiteEngine;
 
@@ -298,6 +299,65 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(oversized).toBeDefined();
     expect(oversized!.status).toBe('warn');
     expect(oversized!.message).toContain('oversized-embed-skip-absent-probe');
+  });
+
+  test('#6536: unbound_source stops counting a page whose source_path is set (reconcile/sync recorded the canonical file)', async () => {
+    // Pre-fix: the WHERE clause filtered only on
+    // `database_only_reason='unbound_source'`; the marker is never cleared
+    // by sync-prepare.ts:626, frontmatter.ts:571, or other paths that
+    // set source_path directly. So a page adopted via those paths
+    // (`sync --no-pull`, manual `UPDATE`, repair imports) kept showing
+    // up here forever, contradicting `gbrain sources reconcile --audit`
+    // which reports `drifted: 0 / database_only: 0` once the file is
+    // recorded. After the fix: a recorded source_path takes the page
+    // out of the unbound count regardless of how the marker was set.
+    await engine.putPage('wiki/unbound-then-synced', {
+      type: 'note',
+      title: 'Unbound then Synced',
+      compiled_truth: 'Body written while the source was unbound, later synced.',
+      timeline: '',
+    });
+    // Simulate the marker the persistence-claims write site sets when
+    // it accepts a write under `persistence.unbound_write=database_only`.
+    await engine.executeRaw(
+      `UPDATE pages SET database_only_reason='unbound_source' WHERE slug=$1`,
+      ['wiki/unbound-then-synced'],
+    );
+    // Sanity: pre-fix, the check warns on the page.
+    // (We don't gate on it — the bound + cache path is the only one that
+    //  can drive status='warn' without a real binding setup. We only
+    //  assert the post-condition below.)
+    await engine.executeRaw(
+      `UPDATE pages SET source_path=$1 WHERE slug=$2`,
+      ['wiki/unbound-then-synced.md', 'wiki/unbound-then-synced'],
+    );
+    // Post-fix: the recorded source_path hides the page from the count.
+    const result = await checkUnboundSource(engine);
+    // The check returns ok when no unbound (without source_path) pages
+    // exist; details.total = 0 means the count cleared.
+    expect(result.status).toBe('ok');
+    expect(result.details?.total ?? 0).toBe(0);
+    expect(JSON.stringify(result)).not.toContain('wiki/unbound-then-synced');
+
+    // Sibling control: a page with the marker AND no recorded source_path
+    // must still count (otherwise the fix over-broadens and hides real
+    // unbound-write leftovers).
+    await engine.putPage('wiki/unbound-still-unbound', {
+      type: 'note',
+      title: 'Unbound still Unbound',
+      compiled_truth: 'Body written while the source was unbound, never synced.',
+      timeline: '',
+    });
+    await engine.executeRaw(
+      `UPDATE pages SET database_only_reason='unbound_source' WHERE slug=$1`,
+      ['wiki/unbound-still-unbound'],
+    );
+    const beforeSync = await checkUnboundSource(engine);
+    // The check is "ok" when no SOURCE is bound (the orphan-still-unbound
+    // case is informational, not a warning); but the orphan-still-unbound
+    // page must show up in the details so an operator can see it.
+    expect(beforeSync.details?.total ?? 0).toBeGreaterThanOrEqual(1);
+    expect(JSON.stringify(beforeSync)).toContain('wiki/unbound-still-unbound');
   });
 
   test('mixed-outcome render path: synthesized checks aggregate as expected', () => {

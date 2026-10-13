@@ -8,6 +8,19 @@ import { unboundBindCommand } from '../../../core/persistence/unbound-source.ts'
  * stays unbound that is the chosen mode, so the count reports ok with the bind
  * command; once the source is bound those pages sit outside its canonical
  * files and are never materialized automatically, so it warns.
+ *
+ * #6536: a page that has since been adopted via `gbrain sources reconcile
+ * <src> <slug> --apply` carries a populated `pages.source_path` (set by
+ * `src/core/persistence/{sync,reconcile}-prepare.ts`,
+ * `src/core/repair/frontmatter.ts`, etc.). The marker `database_only_reason
+ * = 'unbound_source'` is never written off in any of those code paths, so the
+ * page was always going to keep counting here. Excluding rows with a
+ * recorded `source_path` is the documented "reconcile + apply preview" the
+ * instruction already points at — once a page's origin file is recorded
+ * and verified, it is no longer "outside canonical files", and counting it
+ * here is the disagreement the issue measured. `reconcile --audit` already
+ * reports these pages as `drifted: 0 / database_only: 0`; this check just
+ * stops counting them as unbound.
  */
 export async function checkUnboundSource(engine: BrainEngine): Promise<Check> {
   try {
@@ -18,6 +31,7 @@ export async function checkUnboundSource(engine: BrainEngine): Promise<Check> {
         COALESCE((SELECT s.local_path FROM sources s WHERE s.id=p.source_id),
           CASE WHEN p.source_id='default' THEN (SELECT c.value FROM config c WHERE c.key='sync.repo_path') END) AS local_path
        FROM pages p WHERE p.database_only_reason='unbound_source' AND p.deleted_at IS NULL
+         AND p.source_path IS NULL
        GROUP BY p.source_id ORDER BY p.source_id`);
     const sources = rows.map(row => ({ source_id: row.source_id, pages: row.pages, bound: row.bound }));
     const total = rows.reduce((sum, row) => sum + row.pages, 0);
