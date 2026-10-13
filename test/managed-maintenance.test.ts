@@ -640,3 +640,61 @@ test('#6236: a held claim-source rewrite of an existing pattern page submits no 
     } finally { await lock.release(); __setChatTransportForTests(null); }
   });
 }, 90_000);
+
+test('#6537: raw_provenance accepts an atom page with source_slug + source_hash as its raw trace', async () => {
+  // Before the fix: every atom from gbrain dream --phase extract_atoms
+  // records `source_slug` (the page the atom was derived from) plus
+  // `source_hash`, plus `extracted_by`, `extracted_at`, `source_kind`,
+  // and (post-#5211) `dream_generated: true`. None of those keys was
+  // on the accepted-traces list (`raw_trace`, `raw_source`, `source_uri`,
+  // `raw_trace_exempt`, raw_data row, synthesis_evidence row), so every
+  // drain grew the warning with N equal to the number of newly written
+  // atoms. After the fix: a populated `source_slug` (paired with the
+  // matching `source_hash`) counts as the atom's raw trace and the
+  // check reports ok.
+  const engine = backends.length === 1
+    ? engines[0]
+    : engines.find((e) => (e as { kind?: string }).kind === 'pglite') ?? engines[0];
+  await engine.putPage('wiki/atom-source-page', {
+    type: 'note',
+    title: 'Source for atom',
+    compiled_truth: 'Source page for the atom.',
+    timeline: '',
+  });
+  await engine.putPage('wiki/atoms/2026-10-12-stub', {
+    type: 'atom',
+    title: 'Stub atom',
+    compiled_truth: 'Atom body derived from the source page above.',
+    timeline: '',
+    frontmatter: {
+      dream_generated: true,
+      atom_type: 'insight',
+      source_slug: 'wiki/atom-source-page',
+      source_hash: 'a1b2c3d4e5f6',
+      extracted_by: 'extract_atoms-v0.41.2.1',
+      extracted_at: '2026-10-12T00:00:00.000Z',
+    },
+  });
+  const result = await rawProvenanceCheck(engine);
+  expect(result).toMatchObject({ name: 'raw_provenance', status: 'ok' });
+  // Sibling regression guard: an atom with dream_generated:true but
+  // missing BOTH the existing accepted keys AND source_slug must still
+  // warn — the fix must not over-broaden and silently pass truly raw-
+  // trace-less atoms.
+  await engine.putPage('wiki/atoms/2026-10-12-traceless', {
+    type: 'atom',
+    title: 'Traceless atom',
+    compiled_truth: 'Atom with no provenance recorded.',
+    timeline: '',
+    frontmatter: {
+      dream_generated: true,
+      atom_type: 'insight',
+      // No source_slug, no raw_trace, no raw_source, no source_uri,
+      // no raw_trace_exempt — the writer that produced it was
+      // genuinely broken.
+    },
+  });
+  const warned = await rawProvenanceCheck(engine);
+  expect(warned.status).toBe('warn');
+  expect(warned.message).toContain('wiki/atoms/2026-10-12-traceless');
+});

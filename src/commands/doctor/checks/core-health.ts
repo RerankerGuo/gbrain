@@ -529,6 +529,12 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
  * or type:synthesis) must either carry a raw trace or declare an explicit
  * exemption. Accepted traces:
  *   - frontmatter key `raw_trace` / `raw_source` / `source_uri`
+ *   - frontmatter key `source_slug` (#6537): every atom written by
+ *     `gbrain dream --phase extract_atoms` carries `source_slug` (the
+ *     page the atom was derived from) plus `source_hash`; the pair is
+ *     the atom's raw trace. Before this fix the check only accepted
+ *     `raw_trace/raw_source/source_uri`, so every drain grew the warning
+ *     even though every atom had a recorded origin.
  *   - an attached `raw_data` row
  *   - `synthesis_evidence` rows (think-op citations)
  *   - explicit `raw_trace_exempt: true` (reason in `raw_trace_exempt_reason`)
@@ -544,7 +550,7 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
   const where = `
         p.deleted_at IS NULL
     AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
-    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt'])
+    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri', 'raw_trace_exempt', 'source_slug'])
     AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
     AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
   try {
