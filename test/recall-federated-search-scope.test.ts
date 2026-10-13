@@ -132,4 +132,25 @@ describe("recall's page-search arm honors the federated set (#3242 parity)", () 
     const slugs = recallSlugs(await recall().handler(ctx, { query: 'zebra telescope' }));
     expect(slugs).toEqual(['notes/home']);
   });
+
+  test('#4830: each result carries source_id so callers can attribute hits to a federated source', async () => {
+    // Before the fix: recall's results[] projection enumerated slug/title/
+    // chunk/evidence/create_safety/provenance but dropped source_id. The
+    // page-search arm always had it on SearchResult (rowToSearchResult
+    // surfaces it), but the hand-rolled recall projection at ops/facts.ts
+    // did not. Federated callers then had to do a follow-up `get_page` per
+    // row to recover it. Now: every recall result carries it.
+    const res: { results: Array<{ slug: string; source_id?: string }> } =
+      await recall().handler(remoteNoGrant(), { query: 'zebra telescope' });
+    expect(res.results.length).toBeGreaterThan(0);
+    for (const r of res.results) {
+      expect(typeof r.source_id).toBe('string');
+      // The slug's prefix matches the source's local_path mapping used by
+      // the seed step: 'notes/home' lives in 'default', 'wiki/topic' in
+      // 'wiki'. A wrong/stripped source_id would let a federated consumer
+      // attribute a hit to the wrong grant.
+      if (r.slug === 'notes/home') expect(r.source_id).toBe('default');
+      if (r.slug === 'wiki/topic') expect(r.source_id).toBe('wiki');
+    }
+  });
 });

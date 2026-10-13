@@ -530,6 +530,14 @@ const recall: Operation = {
         ? {
             results: packedResults.map(r => ({
               slug: r.slug,
+              // #4830: surface source_id on each result so a federated
+              // caller can tell which source a hit came from. `query`'s
+              // results[] already carries this; recall's pages arm did
+              // not, forcing a follow-up `get_page` per row to recover
+              // it. SearchResult.source_id is optional and pre-v0.17
+              // engines may leave it undefined on the wire (see
+              // rowToSearchResult); absent → absent.
+              source_id: r.source_id,
               title: r.title,
               chunk: r.chunk_text,
               evidence: r.evidence,
