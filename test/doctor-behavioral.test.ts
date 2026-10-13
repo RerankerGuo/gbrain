@@ -300,6 +300,41 @@ describe('buildChecks — orchestrator against PGLite', () => {
     expect(oversized!.message).toContain('oversized-embed-skip-absent-probe');
   });
 
+  test('#6526: oversized_pages honors a DB-plane content_sanity.bytes_block override', async () => {
+    // Before the fix: the check read bytes_block from the synchronous
+    // `loadConfig()` (file + env planes only) and fell back to 500_000, so
+    // a managed brain that set `gbrain config set content_sanity.bytes_block
+    // 1000000` saw the write gate honor the lift (src/core/import-file.ts
+    // uses loadConfigWithEngine) but the doctor check keep warning at the
+    // old 500_000. After the fix: the check goes through loadConfigWithEngine
+    // too and the DB-plane value reaches it. Page is sized between the old
+    // 500_000 default and the new 1_000_000 lift, with no embed_skip
+    // marker, so it is unambiguously the threshold that decides the warn.
+    const lifted = 1_000_000;
+    await engine.setConfig('content_sanity.bytes_block', String(lifted));
+    try {
+      const big = 'oversized page body prose for the db-plane override probe. '.repeat(11_000); // ~630KB
+      await engine.putPage('wiki/oversized-db-plane-probe', {
+        type: 'note',
+        title: 'Oversized DB-Plane Probe',
+        compiled_truth: big,
+        timeline: '',
+      });
+
+      const checks = await buildChecks(engine, []);
+      const oversized = checks.find(c => c.name === 'oversized_pages');
+      expect(oversized).toBeDefined();
+      // 630KB < 1MB → must be ok, NOT warn at 500_000. Pin both the status
+      // AND the message so a regression that swaps the threshold back to
+      // 500_000 fails loudly (the message format prints the threshold).
+      expect(oversized!.status).toBe('ok');
+      expect(oversized!.message).toContain(`${lifted}`);
+      expect(oversized!.message).not.toContain('500000');
+    } finally {
+      await engine.unsetConfig('content_sanity.bytes_block');
+    }
+  });
+
   test('mixed-outcome render path: synthesized checks aggregate as expected', () => {
     // The orchestrator's render path (outputResults in the wrapper) reads
     // the same DoctorReport.status enum we compute here. Pin the

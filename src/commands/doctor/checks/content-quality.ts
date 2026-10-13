@@ -55,9 +55,31 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     // (We re-read here per-check to avoid threading config through
     // every check — bytes_block is read once per doctor run via
     // loadConfig which caches in module-level config layer.)
-    const { loadConfig: _loadCfg } = await import('../../../core/config.ts');
-    const _cfg = _loadCfg();
-    const bytesBlock = _cfg?.content_sanity?.bytes_block ?? 500_000;
+    //
+    // #6526: route through `loadConfigWithEngine`, not `loadConfig`.
+    // The plain variant only reads the file + env config planes;
+    // `gbrain config set content_sanity.bytes_block N` writes the
+    // DB plane, and the write gate (src/core/import-file.ts:423)
+    // already honors it. Doctor falling back to `loadConfig` meant
+    // a DB-plane value never reached this check, so a managed brain
+    // that raised bytes_block kept getting `oversized_pages warn`
+    // at the old 500_000 threshold even after every page had been
+    // re-screen-gated. Mirrors `src/commands/quarantine.ts:280`'s
+    // loadConfigWithEngine use; try/catch is identical in case the
+    // DB-plane lift transiently fails (file/env fall-through is the
+    // documented graceful path).
+    const { loadConfig: _loadCfg, loadConfigWithEngine } = await import('../../../core/config.ts');
+    const _baseCfg = _loadCfg();
+    let bytesBlock: number | undefined;
+    try {
+      bytesBlock = (await loadConfigWithEngine(engine, _baseCfg))?.content_sanity?.bytes_block;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      process.stderr.write(`[doctor] oversized_pages: DB config lift failed (${msg}); falling back to file/env\n`);
+    }
+    if (typeof bytesBlock !== 'number' || !Number.isFinite(bytesBlock) || bytesBlock <= 0) {
+      bytesBlock = 500_000;
+    }
     // #1871: engine.executeRaw, not the dead-on-PGLite postgres singleton.
     const rows = await engine.executeRaw<{ slug: string; source_id: string; bytes: number }>(
       `SELECT p.slug, p.source_id,
